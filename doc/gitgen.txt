@@ -1,0 +1,203 @@
+*gitgen.txt*  AI-powered git commits and PRs from Neovim
+
+Author:   daniOlg
+License:  MIT (see LICENSE)
+Homepage: https://github.com/daniOlg/gitgen.nvim
+
+==============================================================================
+CONTENTS                                                       *gitgen-contents*
+
+  1. Introduction .............. |gitgen-introduction|
+  2. Requirements .............. |gitgen-requirements|
+  3. Installation .............. |gitgen-installation|
+  4. Configuration ............. |gitgen-configuration|
+  5. Commands .................. |gitgen-commands|
+  6. Keymaps ................... |gitgen-keymaps|
+  7. Dashboard ................. |gitgen-dashboard|
+  8. Extending ................. |gitgen-extending|
+  9. Lua API ................... |gitgen-api|
+
+==============================================================================
+1. INTRODUCTION                                             *gitgen-introduction*
+
+gitgen.nvim generates git commit messages and opens Pull Requests using the
+`claude` CLI. It runs non-blocking (coroutines + |vim.system|) and shows an
+animated spinner while the AI thinks.
+
+Supported PR providers: GitHub, Azure DevOps.
+
+==============================================================================
+2. REQUIREMENTS                                             *gitgen-requirements*
+
+- Neovim 0.10+ (`vim.system`, `vim.base64`, `vim.uv`)
+- `claude` CLI in $PATH  (https://docs.anthropic.com/en/docs/claude-code)
+- `git` in $PATH
+- `curl` in $PATH (for PR creation)
+- A token per provider:
+    GitHub      → `~/.github-pat`  OR  `gh auth login`
+    Azure DevOps → `~/.azure-devops-pat`  (scope: Code Read & Write)
+- Optional: snacks.nvim for animated spinner notifications
+
+==============================================================================
+3. INSTALLATION                                             *gitgen-installation*
+
+lazy.nvim (zero config — works immediately): >
+
+    return { "daniOlg/gitgen.nvim" }
+<
+
+With options: >
+
+    {
+      "daniOlg/gitgen.nvim",
+      opts = {
+        pr = {
+          default_target = "main",
+          jira_base_url  = "https://company.atlassian.net/browse/",
+        },
+      },
+    }
+<
+
+==============================================================================
+4. CONFIGURATION                                           *gitgen-configuration*
+
+Pass a table to `require("gitgen").setup(opts)` or use lazy.nvim `opts = {}`.
+All keys are optional — unset keys fall back to the defaults shown below.
+
+>
+    require("gitgen").setup({
+      claude = {
+        cmd    = "claude",   -- path to the claude binary
+        model  = "haiku",    -- default model for all AI calls
+        effort = nil,        -- nil = omit --effort flag
+      },
+
+      commit = {
+        max_diff = 12000,    -- chars of staged diff fed to claude
+        prompt   = "...",    -- full prompt (replace to customise)
+      },
+
+      pr = {
+        default_target = "develop",
+        jira_base_url  = nil,   -- e.g. "https://co.atlassian.net/browse/"
+        model          = "haiku",
+        effort         = "medium",
+        prompt         = "...",
+      },
+
+      providers = {
+        github = { pat_file = "~/.github-pat" },
+        azure  = { pat_file = "~/.azure-devops-pat" },
+      },
+
+      -- Default keymaps. Set keys = false to disable all.
+      keys = {
+        dashboard     = "<leader>G",
+        commit_ai     = "<leader>gc",
+        commit_manual = "<leader>gC",
+        pr_develop    = "<leader>gn",
+        pr_custom     = "<leader>gN",
+      },
+    })
+<
+
+==============================================================================
+5. COMMANDS                                                     *gitgen-commands*
+
+*:GitGen*
+    Open the interactive dashboard.
+
+*:GitGenCommit* [message]
+    Commit staged changes. With no argument, an AI message is generated.
+
+*:GitGenPR* [target] [title] [--id TICKET]
+    Push the current branch and open a PR.
+      target   branch to merge into (default: `pr.default_target`)
+      title    PR title (default: AI-generated from commits)
+      --id     Jira ticket id; its URL is appended to the description
+
+Examples: >
+    :GitGenPR
+    :GitGenPR qa
+    :GitGenPR develop "feat: new login flow"
+    :GitGenPR main --id PROJ-42
+<
+
+==============================================================================
+6. KEYMAPS                                                       *gitgen-keymaps*
+
+Default global keymaps (set `keys = false` in opts to disable):
+
+  <leader>G    Open the GitGen dashboard
+  <leader>gc   GitGenCommit (AI message)
+  <leader>gC   GitGenCommit (manual message — prompts for input)
+  <leader>gn   GitGenPR → default target (develop)
+  <leader>gN   GitGenPR (custom args — prompts for input)
+
+Note: `<leader>G` (capital G) is chosen to avoid conflicting with lazygit's
+`<leader>gg` / `<leader>gG` bindings.
+
+==============================================================================
+7. DASHBOARD                                                   *gitgen-dashboard*
+
+`:GitGen` opens a floating window showing the current repo context:
+
+    Repo, Branch, Staged file count, Detected provider
+
+And a list of actions navigable by keyboard:
+
+  j / k  ↑ / ↓    Move between actions
+  <CR>             Execute the selected action
+  c                Commit (AI message)
+  C                Commit (manual message)
+  p                PR → develop
+  Q                PR → qa
+  P                PR (custom args)
+  r                Refresh context
+  q / <Esc>        Close
+
+==============================================================================
+8. EXTENDING                                                   *gitgen-extending*
+
+Adding a dashboard action: >
+
+    require("gitgen.dashboard").register({
+      key   = "s",
+      label = "Status",
+      desc  = "Run :Git (fugitive)",
+      run   = function() vim.cmd("Git") end,
+    })
+<
+
+Adding a provider (e.g. GitLab):
+
+1. Create `lua/gitgen/providers/gitlab.lua` implementing the interface:
+   `name`, `matches`, `parse`, `token`, `build_request`, `parse_response`.
+2. Register it: >
+       require("gitgen.providers").register(require("gitgen.providers.gitlab"))
+<
+
+==============================================================================
+9. LUA API                                                           *gitgen-api*
+
+>
+    local gitgen = require("gitgen")
+
+    -- Open the dashboard
+    gitgen.dashboard()
+
+    -- Commit staged changes (AI message)
+    gitgen.commit()
+
+    -- Commit with a specific message
+    gitgen.commit("fix: typo in README")
+
+    -- Open a PR (same args as :GitGenPR)
+    gitgen.pr({})
+    gitgen.pr({ "qa" })
+    gitgen.pr({ "main", "--id", "PROJ-42" })
+<
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:
